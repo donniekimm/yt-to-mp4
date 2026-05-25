@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YT → MP4</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: #f0f2f5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 20px rgba(0,0,0,0.09), 0 0 0 1px rgba(0,0,0,0.04);
+      padding: 38px 36px 36px;
+      width: 100%;
+      max-width: 540px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 32px;
+    }
+
+    .header-icon {
+      width: 48px;
+      height: 48px;
+      background: #ff0000;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .header-icon svg { width: 26px; height: 26px; fill: #fff; }
+
+    .header-text h1 { font-size: 20px; font-weight: 700; color: #111; line-height: 1.2; }
+    .header-text p  { font-size: 13px; color: #999; margin-top: 3px; }
+
+    /* ── Form fields ── */
+    .field { margin-bottom: 18px; }
+
+    .field label {
+      display: block;
+      font-size: 11.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #666;
+      margin-bottom: 7px;
+    }
+
+    .field input[type="text"] {
+      display: block;
+      width: 100%;
+      padding: 11px 14px;
+      font-size: 14px;
+      color: #111;
+      background: #fafafa;
+      border: 1.5px solid #e5e5e5;
+      border-radius: 9px;
+      outline: none;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    .field input[type="text"]::placeholder { color: #bbb; }
+    .field input[type="text"]:focus { border-color: #ff0000; background: #fff; }
+
+    .path-row { display: flex; gap: 8px; }
+    .path-row input { flex: 1; min-width: 0; }
+
+    button.browse {
+      flex-shrink: 0;
+      padding: 11px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #444;
+      background: #f4f4f4;
+      border: 1.5px solid #e5e5e5;
+      border-radius: 9px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    button.browse:hover { background: #ebebeb; }
+
+    /* ── Download button ── */
+    button.download {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      width: 100%;
+      padding: 13px;
+      margin-top: 6px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      background: #ff0000;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      letter-spacing: 0.01em;
+    }
+    button.download:hover:not(:disabled) { background: #d90000; }
+    button.download:disabled { opacity: 0.52; cursor: not-allowed; }
+
+    /* ── Progress area ── */
+    .progress-area {
+      display: none;
+      margin-top: 26px;
+      padding-top: 24px;
+      border-top: 1px solid #f0f0f0;
+    }
+
+    .vid-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111;
+      line-height: 1.45;
+      margin-bottom: 14px;
+      word-break: break-word;
+    }
+
+    .phase { font-size: 12px; color: #999; margin-bottom: 8px; }
+
+    .bar-track {
+      height: 6px;
+      background: #f0f0f0;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #ff0000, #ff5555);
+      border-radius: 999px;
+      transition: width 0.25s ease-out;
+    }
+
+    .bar-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #aaa;
+      margin-top: 7px;
+    }
+
+    /* ── Notice (success / error) ── */
+    .notice {
+      display: none;
+      margin-top: 20px;
+      padding: 12px 15px;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    .notice.ok  { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+    .notice.err { background: #fff1f1; color: #c00;    border: 1px solid #fecaca; }
+
+    /* ── Spinner ── */
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2.5px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.65s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div class="card">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">
+      <!-- YouTube wordmark play button -->
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12
+          3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502
+          5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0
+          9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545
+          15.568V8.432L15.818 12l-6.273 3.568z"/>
+      </svg>
+    </div>
+    <div class="header-text">
+      <h1>YouTube → MP4</h1>
+      <p>Download videos to your computer</p>
+    </div>
+  </div>
+
+  <!-- URL input -->
+  <div class="field">
+    <label for="url">YouTube URL</label>
+    <input type="text" id="url"
+      placeholder="https://www.youtube.com/watch?v=..."
+      autocomplete="off" spellcheck="false" />
+  </div>
+
+  <!-- Save folder -->
+  <div class="field">
+    <label for="path">Save folder</label>
+    <div class="path-row">
+      <input type="text" id="path"
+        placeholder="/Users/you/Downloads"
+        autocomplete="off" spellcheck="false" />
+      <button class="browse" id="btn-browse">Browse&hellip;</button>
+    </div>
+  </div>
+
+  <button class="download" id="btn-dl">Download MP4</button>
+
+  <!-- Progress -->
+  <div class="progress-area" id="progress-area">
+    <div class="vid-title" id="vid-title"></div>
+    <div class="phase" id="phase">Starting&hellip;</div>
+    <div class="bar-track">
+      <div class="bar-fill" id="bar"></div>
+    </div>
+    <div class="bar-meta">
+      <span id="pct">0%</span>
+      <span id="speed-eta"></span>
+    </div>
+  </div>
+
+  <!-- Result notice -->
+  <div class="notice" id="notice"></div>
+
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+
+  const urlEl       = $('url');
+  const pathEl      = $('path');
+  const btnBrowse   = $('btn-browse');
+  const btnDl       = $('btn-dl');
+  const progressArea = $('progress-area');
+  const vidTitle    = $('vid-title');
+  const phaseEl     = $('phase');
+  const bar         = $('bar');
+  const pctEl       = $('pct');
+  const speedEtaEl  = $('speed-eta');
+  const noticeEl    = $('notice');
+
+  let es = null;
+
+  // ── Browse folder ──────────────────────────────────────────────────────────
+  btnBrowse.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/browse', { method: 'POST' });
+      const data = await res.json();
+      if (data.path) {
+        pathEl.value = data.path;
+      } else if (data.error) {
+        showErr('Folder picker: ' + data.error + '\nType the path manually instead.');
+      }
+    } catch {
+      showErr('Could not open folder picker. Type the path manually.');
+    }
+  });
+
+  // ── Download ───────────────────────────────────────────────────────────────
+  btnDl.addEventListener('click', async () => {
+    const url  = urlEl.value.trim();
+    const path = pathEl.value.trim();
+
+    if (!url)  { showErr('Enter a YouTube URL.');    return; }
+    if (!path) { showErr('Choose a save folder.');   return; }
+
+    resetProgress();
+    hideNotice();
+    progressArea.style.display = 'block';
+    setBusy(true);
+
+    try {
+      const res = await fetch('/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, save_path: path }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || data.error) {
+        showErr(data.error || 'Failed to start download.');
+        setBusy(false);
+        progressArea.style.display = 'none';
+        return;
+      }
+
+      openEventStream(data.job_id);
+
+    } catch (err) {
+      showErr('Network error: ' + err.message);
+      setBusy(false);
+      progressArea.style.display = 'none';
+    }
+  });
+
+  // ── SSE progress stream ────────────────────────────────────────────────────
+  function openEventStream(jobId) {
+    if (es) es.close();
+    es = new EventSource('/progress/' + jobId);
+
+    es.onmessage = e => {
+      const ev = JSON.parse(e.data);
+
+      if (ev.type === 'title') {
+        vidTitle.textContent = ev.data.title;
+
+      } else if (ev.type === 'progress') {
+        const p = ev.data.percent ?? 0;
+        bar.style.width = p + '%';
+        pctEl.textContent = p + '%';
+        if (ev.data.phase) phaseEl.textContent = ev.data.phase;
+        const parts = [];
+        if (ev.data.speed) parts.push(ev.data.speed);
+        if (ev.data.eta)   parts.push('ETA ' + ev.data.eta);
+        speedEtaEl.textContent = parts.join(' · ');
+
+      } else if (ev.type === 'complete') {
+        bar.style.width = '100%';
+        pctEl.textContent = '100%';
+        phaseEl.textContent = 'Done!';
+        speedEtaEl.textContent = '';
+        showOk('✓ Downloaded: ' + ev.data.title);
+        setBusy(false);
+        es.close();
+
+      } else if (ev.type === 'error') {
+        showErr(ev.data.message);
+        setBusy(false);
+        progressArea.style.display = 'none';
+        es.close();
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      if (btnDl.disabled) {
+        showErr('Connection to server lost. The download may still be running — check your save folder.');
+        setBusy(false);
+      }
+    };
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function resetProgress() {
+    vidTitle.textContent = '';
+    phaseEl.textContent  = 'Starting…';
+    bar.style.width      = '0%';
+    pctEl.textContent    = '0%';
+    speedEtaEl.textContent = '';
+  }
+
+  function setBusy(busy) {
+    btnDl.disabled   = busy;
+    btnDl.innerHTML  = busy
+      ? '<div class="spinner"></div>Downloading…'
+      : 'Download MP4';
+  }
+
+  function showOk(msg) {
+    noticeEl.className    = 'notice ok';
+    noticeEl.textContent  = msg;
+    noticeEl.style.display = 'block';
+  }
+
+  function showErr(msg) {
+    noticeEl.className    = 'notice err';
+    noticeEl.textContent  = msg;
+    noticeEl.style.display = 'block';
+  }
+
+  function hideNotice() {
+    noticeEl.style.display = 'none';
+  }
+</script>
+</body>
+</html>
