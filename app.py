@@ -13,6 +13,22 @@ import yt_dlp
 app = Flask(__name__)
 jobs: dict[str, "DownloadJob"] = {}
 
+_COOKIES_FILE: str | None = None
+
+def _init_cookies() -> None:
+    global _COOKIES_FILE
+    cookie_data = os.environ.get("YOUTUBE_COOKIES", "").strip()
+    if not cookie_data:
+        return
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", prefix="yt_cookies_", delete=False
+    )
+    tmp.write(cookie_data)
+    tmp.close()
+    _COOKIES_FILE = tmp.name
+
+_init_cookies()
+
 
 def check_ffmpeg() -> None:
     path = shutil.which("ffmpeg")
@@ -107,6 +123,8 @@ def run_download(job_id: str, url: str) -> None:
         "quiet": True,
         "no_warnings": True,
     }
+    if _COOKIES_FILE:
+        opts["cookiefile"] = _COOKIES_FILE
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
