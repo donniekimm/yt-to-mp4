@@ -79,24 +79,6 @@
     .field input[type="text"]::placeholder { color: #bbb; }
     .field input[type="text"]:focus { border-color: #ff0000; background: #fff; }
 
-    .path-row { display: flex; gap: 8px; }
-    .path-row input { flex: 1; min-width: 0; }
-
-    button.browse {
-      flex-shrink: 0;
-      padding: 11px 14px;
-      font-size: 13px;
-      font-weight: 600;
-      color: #444;
-      background: #f4f4f4;
-      border: 1.5px solid #e5e5e5;
-      border-radius: 9px;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background 0.15s;
-    }
-    button.browse:hover { background: #ebebeb; }
-
     /* ── Download button ── */
     button.download {
       display: flex;
@@ -206,7 +188,7 @@
     </div>
     <div class="header-text">
       <h1>YouTube → MP4</h1>
-      <p>Download videos to your computer</p>
+      <p>Paste a URL and download the video</p>
     </div>
   </div>
 
@@ -216,17 +198,6 @@
     <input type="text" id="url"
       placeholder="https://www.youtube.com/watch?v=..."
       autocomplete="off" spellcheck="false" />
-  </div>
-
-  <!-- Save folder -->
-  <div class="field">
-    <label for="path">Save folder</label>
-    <div class="path-row">
-      <input type="text" id="path"
-        placeholder="/Users/you/Downloads"
-        autocomplete="off" spellcheck="false" />
-      <button class="browse" id="btn-browse">Browse&hellip;</button>
-    </div>
   </div>
 
   <button class="download" id="btn-dl">Download MP4</button>
@@ -252,42 +223,23 @@
 <script>
   const $ = id => document.getElementById(id);
 
-  const urlEl       = $('url');
-  const pathEl      = $('path');
-  const btnBrowse   = $('btn-browse');
-  const btnDl       = $('btn-dl');
+  const urlEl        = $('url');
+  const btnDl        = $('btn-dl');
   const progressArea = $('progress-area');
-  const vidTitle    = $('vid-title');
-  const phaseEl     = $('phase');
-  const bar         = $('bar');
-  const pctEl       = $('pct');
-  const speedEtaEl  = $('speed-eta');
-  const noticeEl    = $('notice');
+  const vidTitle     = $('vid-title');
+  const phaseEl      = $('phase');
+  const bar          = $('bar');
+  const pctEl        = $('pct');
+  const speedEtaEl   = $('speed-eta');
+  const noticeEl     = $('notice');
 
   let es = null;
 
-  // ── Browse folder ──────────────────────────────────────────────────────────
-  btnBrowse.addEventListener('click', async () => {
-    try {
-      const res = await fetch('/browse', { method: 'POST' });
-      const data = await res.json();
-      if (data.path) {
-        pathEl.value = data.path;
-      } else if (data.error) {
-        showErr('Folder picker: ' + data.error + '\nType the path manually instead.');
-      }
-    } catch {
-      showErr('Could not open folder picker. Type the path manually.');
-    }
-  });
-
   // ── Download ───────────────────────────────────────────────────────────────
   btnDl.addEventListener('click', async () => {
-    const url  = urlEl.value.trim();
-    const path = pathEl.value.trim();
+    const url = urlEl.value.trim();
 
-    if (!url)  { showErr('Enter a YouTube URL.');    return; }
-    if (!path) { showErr('Choose a save folder.');   return; }
+    if (!url) { showErr('Enter a YouTube URL.'); return; }
 
     resetProgress();
     hideNotice();
@@ -298,7 +250,7 @@
       const res = await fetch('/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, save_path: path }),
+        body: JSON.stringify({ url }),
       });
       const data = await res.json();
 
@@ -344,9 +296,11 @@
         pctEl.textContent = '100%';
         phaseEl.textContent = 'Done!';
         speedEtaEl.textContent = '';
-        showOk('✓ Downloaded: ' + ev.data.title);
+        showOk('Saved: ' + ev.data.title + ' — check your Downloads folder.');
         setBusy(false);
         es.close();
+        // Trigger browser file download
+        window.location.href = '/file/' + jobId;
 
       } else if (ev.type === 'error') {
         showErr(ev.data.message);
@@ -359,7 +313,7 @@
     es.onerror = () => {
       es.close();
       if (btnDl.disabled) {
-        showErr('Connection to server lost. The download may still be running — check your save folder.');
+        showErr('Connection lost. The download may still be running — try refreshing.');
         setBusy(false);
       }
     };

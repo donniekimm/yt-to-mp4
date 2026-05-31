@@ -4,8 +4,10 @@ import threading
 import uuid
 import time
 import json
+import tempfile
+import glob
 
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, send_file
 import yt_dlp
 
 app = Flask(__name__)
@@ -19,10 +21,6 @@ def check_ffmpeg() -> None:
             "\n"
             "  WARNING: FFmpeg not found on PATH.\n"
             "  yt-dlp needs FFmpeg to merge video + audio into a single MP4.\n"
-            "  Install it, then make sure 'ffmpeg' is on your system PATH.\n"
-            "    macOS:   brew install ffmpeg\n"
-            "    Windows: https://ffmpeg.org/download.html\n"
-            "    Linux:   sudo apt install ffmpeg\n"
         )
     else:
         print(f"  FFmpeg: {path}")
@@ -34,22 +32,41 @@ class DownloadJob:
         self.status = "pending"   # pending | running | complete | error
         self.events: list[dict] = []
         self.lock = threading.Lock()
+        self.tmp_dir: str | None = None
+        self.file_path: str | None = None
+        self.created_at: float = time.time()
 
     def push(self, event_type: str, data: dict) -> None:
         with self.lock:
             self.events.append({"type": event_type, "data": data})
 
 
-def run_download(job_id: str, url: str, save_path: str) -> None:
+def _cleanup_old_jobs() -> None:
+    while True:
+        time.sleep(300)
+        cutoff = time.time() - 1800  # 30 minutes
+        for job_id in list(jobs.keys()):
+            job = jobs.get(job_id)
+            if job and job.created_at < cutoff:
+                if job.tmp_dir:
+                    shutil.rmtree(job.tmp_dir, ignore_errors=True)
+                jobs.pop(job_id, None)
+
+
+threading.Thread(target=_cleanup_old_jobs, daemon=True).start()
+
+
+def run_download(job_id: str, url: str) -> None:
     job = jobs[job_id]
     job.status = "running"
+    tmp_dir = tempfile.mkdtemp(prefix=f"ytdl_{job_id}_")
+    job.tmp_dir = tmp_dir
 
-    phase = [0]           # 0 = video stream, 1 = audio stream
+    phase = [0]
     title_sent = [False]
     title_ref = [""]
 
     def progress_hook(d: dict) -> None:
-        # Grab the video title from the first hook call that has it
         if not title_sent[0]:
             t = (d.get("info_dict") or {}).get("title", "")
             if t:
@@ -82,62 +99,35 @@ def run_download(job_id: str, url: str, save_path: str) -> None:
                 "phase": "Merging / converting...",
             })
 
-    base_opts = {
+    opts = {
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
-        "outtmpl": os.path.join(save_path, "%(title)s.%(ext)s"),
+        "outtmpl": os.path.join(tmp_dir, "%(title)s.%(ext)s"),
         "merge_output_format": "mp4",
         "progress_hooks": [progress_hook],
         "quiet": True,
         "no_warnings": True,
     }
 
-    # Browsers to try for cookie extraction when YouTube returns 403.
-    _BROWSERS = ["chrome", "firefox", "safari", "edge"]
-
-    def _attempt(extra_opts: dict) -> None:
-        opts = {**base_opts, **extra_opts}
+    try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
-
-    def _is_403(exc: Exception) -> bool:
-        return "403" in str(exc) or "Forbidden" in str(exc) or "Sign in" in str(exc)
-
-    try:
-        _attempt({})
     except yt_dlp.utils.DownloadError as exc:
-        if not _is_403(exc):
-            msg = str(exc)
-            if "ERROR:" in msg:
-                msg = msg.split("ERROR:", 1)[-1].strip()
-            job.status = "error"
-            job.push("error", {"message": msg})
-            return
-
-        # 403 — retry with each available browser's cookies
-        succeeded = False
-        for browser in _BROWSERS:
-            try:
-                # Reset phase/title state for the retry
-                phase[0] = 0
-                title_sent[0] = False
-                _attempt({"cookiesfrombrowser": (browser,)})
-                succeeded = True
-                break
-            except Exception:
-                continue
-
-        if not succeeded:
-            job.status = "error"
-            job.push("error", {"message": (
-                "YouTube blocked the download (403). Make sure you're logged into "
-                "YouTube in Chrome, Firefox, Safari, or Edge and try again."
-            )})
-            return
-
+        msg = str(exc)
+        if "ERROR:" in msg:
+            msg = msg.split("ERROR:", 1)[-1].strip()
+        job.status = "error"
+        job.push("error", {"message": msg})
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return
     except Exception as exc:
         job.status = "error"
         job.push("error", {"message": str(exc)})
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         return
+
+    mp4_files = glob.glob(os.path.join(tmp_dir, "*.mp4"))
+    if mp4_files:
+        job.file_path = mp4_files[0]
 
     title = title_ref[0] or "your video"
     job.status = "complete"
@@ -149,62 +139,19 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/browse", methods=["POST"])
-def browse():
-    # tkinter crashes on macOS when called from a non-main thread (Flask worker).
-    # Isolate the GUI call in a subprocess so it gets its own main thread.
-    try:
-        import subprocess
-        import sys
-        import platform
-
-        if platform.system() == "Darwin":
-            # osascript is simpler and more reliable than tkinter on macOS
-            r = subprocess.run(
-                ["osascript", "-e",
-                 'POSIX path of (choose folder with prompt "Select Save Folder")'],
-                capture_output=True, text=True, timeout=60,
-            )
-            folder = r.stdout.strip().rstrip("/") if r.returncode == 0 else ""
-        else:
-            script = (
-                "import tkinter as tk, sys;"
-                "from tkinter import filedialog;"
-                "root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', 1);"
-                "f = filedialog.askdirectory(title='Select Save Folder');"
-                "root.destroy(); print(f or '', end='')"
-            )
-            r = subprocess.run(
-                [sys.executable, "-c", script],
-                capture_output=True, text=True, timeout=60,
-            )
-            folder = r.stdout.strip()
-
-        return jsonify({"path": folder or ""})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
-
-
 @app.route("/download", methods=["POST"])
 def start_download():
     data = request.get_json(force=True, silent=True) or {}
     url = (data.get("url") or "").strip()
-    save_path = (data.get("save_path") or "").strip()
 
     if not url:
         return jsonify({"error": "No URL provided."}), 400
-    if not save_path:
-        return jsonify({"error": "No save folder specified."}), 400
-    if not os.path.isdir(save_path):
-        return jsonify({"error": f"Folder not found: {save_path}"}), 400
-    if not os.access(save_path, os.W_OK):
-        return jsonify({"error": f"Cannot write to: {save_path}"}), 400
 
     job_id = str(uuid.uuid4())
     job = DownloadJob(job_id)
     jobs[job_id] = job
 
-    t = threading.Thread(target=run_download, args=(job_id, url, save_path), daemon=True)
+    t = threading.Thread(target=run_download, args=(job_id, url), daemon=True)
     t.start()
 
     return jsonify({"job_id": job_id})
@@ -243,9 +190,27 @@ def stream_progress(job_id: str):
     )
 
 
+@app.route("/file/<job_id>")
+def serve_file(job_id: str):
+    job = jobs.get(job_id)
+    if not job or job.status != "complete" or not job.file_path:
+        return jsonify({"error": "File not ready"}), 404
+    if not os.path.exists(job.file_path):
+        return jsonify({"error": "File no longer available"}), 410
+
+    return send_file(
+        job.file_path,
+        as_attachment=True,
+        download_name=os.path.basename(job.file_path),
+        mimetype="video/mp4",
+    )
+
+
 if __name__ == "__main__":
     print("\nYouTube to MP4 Downloader")
     print("=" * 40)
     check_ffmpeg()
-    print("\nOpen http://localhost:5000 in your browser.\n")
-    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+    port = int(os.environ.get("PORT", 5000))
+    host = "0.0.0.0"
+    print(f"\nOpen http://localhost:{port} in your browser.\n")
+    app.run(host=host, port=port, debug=False, threaded=True)
