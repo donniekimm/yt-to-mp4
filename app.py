@@ -122,6 +122,7 @@ def run_download(job_id: str, url: str) -> None:
         "progress_hooks": [progress_hook],
         "quiet": True,
         "no_warnings": True,
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
     if _COOKIES_FILE:
         opts["cookiefile"] = _COOKIES_FILE
