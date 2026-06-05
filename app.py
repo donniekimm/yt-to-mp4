@@ -80,14 +80,18 @@ def _build_format(quality: str) -> str:
     yt-dlp must merge them with FFmpeg (the high-quality path) and only
     fall back to a progressive single stream if no merge is possible.
     """
+    # No [ext=mp4] filter on the video: on YouTube the only mp4-container
+    # video uses the throttled H.264 codec, so an ext=mp4 filter silently
+    # discards the high-bitrate VP9/AV1 streams (~5x the data rate) before
+    # quality is ever weighed. We pick the best stream by quality regardless
+    # of codec and let merge_output_format put it into an .mp4 container.
     if quality and quality != "best":
         h = quality
         return (
-            f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/"
             f"bestvideo[height<={h}]+bestaudio/"
             f"best[height<={h}]"
         )
-    return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+    return "bestvideo+bestaudio/best"
 
 
 def run_download(job_id: str, url: str, quality: str = "best") -> None:
