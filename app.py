@@ -72,7 +72,25 @@ def _cleanup_old_jobs() -> None:
 threading.Thread(target=_cleanup_old_jobs, daemon=True).start()
 
 
-def run_download(job_id: str, url: str) -> None:
+def _build_format(quality: str) -> str:
+    """Build a yt-dlp format string, optionally capped to a max height.
+
+    `quality` is "best" or a pixel height like "1080" / "720" / "480".
+    In every case we ask for the best separate video + audio streams so
+    yt-dlp must merge them with FFmpeg (the high-quality path) and only
+    fall back to a progressive single stream if no merge is possible.
+    """
+    if quality and quality != "best":
+        h = quality
+        return (
+            f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/"
+            f"bestvideo[height<={h}]+bestaudio/"
+            f"best[height<={h}]"
+        )
+    return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+
+
+def run_download(job_id: str, url: str, quality: str = "best") -> None:
     job = jobs[job_id]
     job.status = "running"
     tmp_dir = tempfile.mkdtemp(prefix=f"ytdl_{job_id}_")
@@ -116,13 +134,19 @@ def run_download(job_id: str, url: str) -> None:
             })
 
     opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+        "format": _build_format(quality),
         "outtmpl": os.path.join(tmp_dir, "%(title)s.%(ext)s"),
         "merge_output_format": "mp4",
+        "postprocessors": [
+            {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"},
+        ],
         "progress_hooks": [progress_hook],
         "quiet": True,
         "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        # "web"/"tv" clients expose the full set of high-res formats; the
+        # "android" client is throttled and often caps at 720p, so list it
+        # last as a fallback only.
+        "extractor_args": {"youtube": {"player_client": ["web", "tv", "android"]}},
     }
     if _COOKIES_FILE:
         opts["cookiefile"] = _COOKIES_FILE
@@ -162,15 +186,19 @@ def index():
 def start_download():
     data = request.get_json(force=True, silent=True) or {}
     url = (data.get("url") or "").strip()
+    quality = str(data.get("quality") or "best").strip()
 
     if not url:
         return jsonify({"error": "No URL provided."}), 400
+
+    if quality not in ("best", "1080", "720", "480"):
+        quality = "best"
 
     job_id = str(uuid.uuid4())
     job = DownloadJob(job_id)
     jobs[job_id] = job
 
-    t = threading.Thread(target=run_download, args=(job_id, url), daemon=True)
+    t = threading.Thread(target=run_download, args=(job_id, url, quality), daemon=True)
     t.start()
 
     return jsonify({"job_id": job_id})

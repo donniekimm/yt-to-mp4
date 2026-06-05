@@ -79,6 +79,21 @@
     .field input[type="text"]::placeholder { color: #bbb; }
     .field input[type="text"]:focus { border-color: #ff0000; background: #fff; }
 
+    .field select {
+      display: block;
+      width: 100%;
+      padding: 11px 14px;
+      font-size: 14px;
+      color: #111;
+      background: #fafafa;
+      border: 1.5px solid #e5e5e5;
+      border-radius: 9px;
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .field select:focus { border-color: #ff0000; background: #fff; }
+
     /* ── Download button ── */
     button.download {
       display: flex;
@@ -200,6 +215,17 @@
       autocomplete="off" spellcheck="false" />
   </div>
 
+  <!-- Quality selector -->
+  <div class="field">
+    <label for="quality">Quality</label>
+    <select id="quality">
+      <option value="best">Best available</option>
+      <option value="1080">1080p</option>
+      <option value="720">720p</option>
+      <option value="480">480p</option>
+    </select>
+  </div>
+
   <button class="download" id="btn-dl">Download MP4</button>
 
   <!-- Progress -->
@@ -224,6 +250,7 @@
   const $ = id => document.getElementById(id);
 
   const urlEl        = $('url');
+  const qualityEl    = $('quality');
   const btnDl        = $('btn-dl');
   const progressArea = $('progress-area');
   const vidTitle     = $('vid-title');
@@ -238,6 +265,7 @@
   // ── Download ───────────────────────────────────────────────────────────────
   btnDl.addEventListener('click', async () => {
     const url = urlEl.value.trim();
+    const quality = qualityEl.value;
 
     if (!url) { showErr('Enter a YouTube URL.'); return; }
 
@@ -250,7 +278,7 @@
       const res = await fetch('/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, quality }),
       });
       const data = await res.json();
 
