@@ -80,11 +80,6 @@ def _build_format(quality: str) -> str:
     yt-dlp must merge them with FFmpeg (the high-quality path) and only
     fall back to a progressive single stream if no merge is possible.
     """
-    # No [ext=mp4] filter on the video: on YouTube the only mp4-container
-    # video uses the throttled H.264 codec, so an ext=mp4 filter silently
-    # discards the high-bitrate VP9/AV1 streams (~5x the data rate) before
-    # quality is ever weighed. We pick the best stream by quality regardless
-    # of codec and let merge_output_format put it into an .mp4 container.
     if quality and quality != "best":
         h = quality
         return (
@@ -92,6 +87,13 @@ def _build_format(quality: str) -> str:
             f"best[height<={h}]"
         )
     return "bestvideo+bestaudio/best"
+
+
+# YouTube's VP9/AV1 DASH streams use much lower bitrates than H.264 at the
+# same resolution (e.g. ~1.2 Mbps vs ~3 Mbps at 1080p). yt-dlp's default
+# sort prefers efficient codecs over bitrate, so we force resolution first,
+# then pick the highest-bitrate stream available at that resolution.
+_FORMAT_SORT = ["res", "fps", "hdr:12", "br", "size", "asr"]
 
 
 def run_download(job_id: str, url: str, quality: str = "best") -> None:
@@ -139,11 +141,14 @@ def run_download(job_id: str, url: str, quality: str = "best") -> None:
 
     opts = {
         "format": _build_format(quality),
+        "format_sort": _FORMAT_SORT,
+        "format_sort_force": True,
+        # Node is on PATH on most Windows setups; required for YouTube's JS
+        # challenges so high-bitrate DASH/HLS streams are available.
+        "js_runtimes": {"node": {}},
         "outtmpl": os.path.join(tmp_dir, "%(title)s.%(ext)s"),
         "merge_output_format": "mp4",
-        "postprocessors": [
-            {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"},
-        ],
+        "postprocessor_args": {"Merger": ["-c", "copy", "-movflags", "+faststart"]},
         "progress_hooks": [progress_hook],
         "quiet": True,
         "no_warnings": True,
